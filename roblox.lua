@@ -221,82 +221,139 @@ RightGroupBox:AddToggle('tracers', {
     end
 })
 
--- Reference the camera in Workspace
-local camera = game:GetService("Workspace").CurrentCamera
-local CurrentCamera = workspace.CurrentCamera
-local worldToViewportPoint = CurrentCamera.worldToViewportPoint
+-- settings
+local settings = {
+   defaultcolor = Color3.fromRGB(255, 0, 0),
+   teamcheck = false,
+   teamcolor = true
+};
 
-local HeadOff = Vector3.new(0, 0.5, 0)
-local LegOff = Vector3.new(0, 3, 0)
+-- services
+local runService = game:GetService("RunService");
+local players = game:GetService("Players");
+local userInputService = game:GetService("UserInputService");
 
--- Create a variable to track the ESP state
-local isEspEnabled = false
+-- variables
+local localPlayer = players.LocalPlayer;
+local camera = workspace.CurrentCamera;
 
--- Function to toggle ESP
-function ToggleEsp(enable)
-    isEspEnabled = enable
+-- functions
+local newVector2, newColor3, newDrawing = Vector2.new, Color3.new, Drawing.new;
+local tan, rad = math.tan, math.rad;
+local round = function(...) local a = {}; for i, v in next, table.pack(...) do a[i] = math.round(v); end return unpack(a); end;
+local wtvp = function(...) local a, b = camera.WorldToViewportPoint(camera, ...); return newVector2(a.X, a.Y), b, a.Z end;
+
+local espCache = {};
+local espEnabled = false;
+
+local function createEsp(player)
+   local drawings = {};
+
+   drawings.box = newDrawing("Square");
+   drawings.box.Thickness = 1;
+   drawings.box.Filled = false;
+   drawings.box.Color = settings.defaultcolor;
+   drawings.box.Visible = false;
+   drawings.box.ZIndex = 2;
+
+   drawings.boxoutline = newDrawing("Square");
+   drawings.boxoutline.Thickness = 3;
+   drawings.boxoutline.Filled = false;
+   drawings.boxoutline.Color = newColor3();
+   drawings.boxoutline.Visible = false;
+   drawings.boxoutline.ZIndex = 1;
+
+   espCache[player] = drawings;
 end
 
-for _, v in pairs(game.Players:GetChildren()) do
-    local BoxOutline = Drawing.new("Square")
-    BoxOutline.Visible = false
-    BoxOutline.Color = Color3.new(0.666667, 0, 0)
-    BoxOutline.Thickness = 2
-    BoxOutline.Transparency = 1
-    BoxOutline.Filled = false
-
-    local Box = Drawing.new("Square")
-    Box.Visible = false
-    Box.Color = Color3.new(0.666667, 0, 0)
-    Box.Thickness = 2
-    Box.Transparency = 1
-    Box.Filled = false
-
-    function boxesp()
-        game:GetService("RunService").RenderStepped:Connect(function()
-            if isEspEnabled and v.Character ~= nil and v.Character:FindFirstChild("Humanoid") ~= nil and v.Character:FindFirstChild("HumanoidRootPart") ~= nil and v ~= game.Players.LocalPlayer and v.Character.Humanoid.Health > 0 then
-                local Vector, onScreen = camera:worldToViewportPoint(v.Character.HumanoidRootPart.Position)
-
-                local RootPart = v.Character.HumanoidRootPart
-                local Head = v.Character.Head
-                local RootPosition, RootVis = worldToViewportPoint(CurrentCamera, RootPart.Position)
-                local HeadPosition = worldToViewportPoint(CurrentCamera, Head.Position + HeadOff)
-                local LegPosition = worldToViewportPoint(CurrentCamera, RootPart.Position - LegOff)
-
-                if onScreen then
-                    BoxOutline.Size = Vector2.new(1000 / RootPosition.z, HeadPosition.Y - LegPosition.Y)
-                    BoxOutline.Position = Vector2.new(RootPosition.X - BoxOutline.Size.X / 2, RootPosition.Y - BoxOutline.Size.Y / 2)
-                    BoxOutline.Visible = true
-
-                    Box.Size = Vector2.new(1000 / RootPosition.z, HeadPosition.Y - LegPosition.Y)
-                    Box.Position = Vector2.new(RootPosition.X - BoxOutline.Size.X / 2, RootPosition.Y - BoxOutline.Size.Y / 2)
-                    Box.Visible = true
-                else
-                    BoxOutline.Visible = false
-                    Box.Visible = false
-                end
-            else
-                BoxOutline.Visible = false
-                Box.Visible = false
-            end
-        end)
-    end
-
-    coroutine.wrap(boxesp)()
+local function removeEsp(player)
+   if rawget(espCache, player) then
+       for _, drawing in next, espCache[player] do
+           drawing:Remove();
+       end
+       espCache[player] = nil;
+   end
 end
 
-RightGroupBox:AddToggle('BOX', {
-    Text = 'BOX Toggle',
+local function updateEsp(player, esp)
+   local character = player and player.Character;
+   if character then
+       local cframe = character:GetModelCFrame();
+       local position, visible, depth = wtvp(cframe.Position);
+       esp.box.Visible = visible;
+       esp.boxoutline.Visible = visible;
+
+       if cframe and visible then
+           local scaleFactor = 1 / (depth * tan(rad(camera.FieldOfView / 2)) * 2) * 1000;
+           local width, height = round(4 * scaleFactor, 5 * scaleFactor);
+           local x, y = round(position.X, position.Y);
+
+           esp.box.Size = newVector2(width, height);
+           esp.box.Position = newVector2(round(x - width / 2, y - height / 2));
+           esp.box.Color = settings.teamcolor and player.TeamColor.Color or settings.defaultcolor;
+
+           esp.boxoutline.Size = esp.box.Size;
+           esp.boxoutline.Position = esp.box.Position;
+       end
+   else
+       esp.box.Visible = false;
+       esp.boxoutline.Visible = false;
+   end
+end
+
+local function toggleEsp()
+   espEnabled = not espEnabled;
+   if espEnabled then
+       for _, player in next, players:GetPlayers() do
+           if player ~= localPlayer then
+               createEsp(player);
+           end
+       end
+   else
+       for _, player in next, players:GetPlayers() do
+           removeEsp(player);
+       end
+   end
+end
+
+RightGroupBox:AddToggle('Box', {
+    Text = 'Box',
     Default = false, -- Default value (true / false)
-    Tooltip = 'Toggles box esp ofc', -- Information shown when you hover over the toggle
+    Tooltip = 'Enables box ESP', -- Information shown when you hover over the toggle
 
     Callback = function(Value)
-        ToggleEsp(Value) -- Toggle ESP based on the GUI toggle value
+        toggleEsp()
     end
 })
 
-game.Players.PlayerAdded:Connect(function(v)
-    ToggleEsp()
+-- Connect player added and removed events
+players.PlayerAdded:Connect(function(player)
+   if espEnabled then
+       createEsp(player);
+   end
+end);
+
+players.PlayerRemoving:Connect(function(player)
+   if espEnabled then
+       removeEsp(player);
+   end
+end)
+
+-- ESP rendering loop
+runService:BindToRenderStep("esp", Enum.RenderPriority.Camera.Value, function()
+   if not espEnabled then
+       return
+   end
+
+   for player, drawings in next, espCache do
+       if settings.teamcheck and player.Team == localPlayer.Team then
+           continue;
+       end
+
+       if drawings and player ~= localPlayer then
+           updateEsp(player, drawings);
+       end
+   end
 end)
 
 -- Reference the camera in Workspace
